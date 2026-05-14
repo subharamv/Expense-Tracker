@@ -1,0 +1,8 @@
+{
+  "name": "FieldSpend",
+  "description": "Enterprise-grade expense management for survey crews featuring AI OCR, Google Drive vault storage, and a collapsible administrative dashboard.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
