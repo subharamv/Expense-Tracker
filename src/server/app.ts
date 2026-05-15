@@ -14,7 +14,7 @@ dotenv.config({ path: ".env.local", override: true });
 const ROOT_FOLDER_ID = process.env.ROOT_FOLDER_ID || "0AK4D4vO9xm56Uk9PVA";
 const PROVIDED_SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1rS9b6i_H4np17S-XRa_1plogHfAGRPmrNE8BXr2S7bU";
 
-const APPS_SCRIPT_URL    = process.env.APPS_SCRIPT_URL    || "";
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || "";
 const APPS_SCRIPT_SECRET = process.env.APPS_SCRIPT_SECRET || "";
 
 async function callAppsScript(action: string, params: Record<string, unknown>, spreadsheetId: string): Promise<any> {
@@ -40,25 +40,31 @@ export async function createExpressApp() {
 
   // Service Account Auth
   let auth: any;
-  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
 
-  if (serviceAccountJson) {
+  if (serviceAccountEmail && privateKeyRaw) {
     try {
-      console.log("Parsing GOOGLE_SERVICE_ACCOUNT_JSON...");
-      const credentials = JSON.parse(serviceAccountJson);
-      auth = google.auth.fromJSON(credentials);
-      auth.scopes = [
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/cloud-platform"
-      ];
-      console.log("Service Account Auth initialized via fromJSON.");
+      console.log("Initializing Google Auth with separate env vars...");
+      const privateKey = privateKeyRaw.replace(/\\n/g, '\n');
+      auth = new google.auth.GoogleAuth({
+        credentials: {
+          client_email: serviceAccountEmail,
+          private_key: privateKey,
+        },
+        scopes: [
+          "https://www.googleapis.com/auth/drive.file",
+          "https://www.googleapis.com/auth/drive",
+          "https://www.googleapis.com/auth/spreadsheets",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ]
+      });
+      console.log("Service Account Auth initialized via separate env vars.");
     } catch (e) {
-      console.error("CRITICAL: Failed to parse or initialize GOOGLE_SERVICE_ACCOUNT_JSON", e);
+      console.error("CRITICAL: Failed to parse or initialize Google Auth credentials", e);
     }
   } else {
-    console.warn("GOOGLE_SERVICE_ACCOUNT_JSON environment variable is missing.");
+    console.warn("GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY environment variables are missing.");
   }
 
   if (!auth) {
@@ -93,7 +99,7 @@ export async function createExpressApp() {
     if (!auth) return;
     try {
       console.log("Checking connection to provided Spreadsheet:", SPREADSHEET_ID);
-      
+
       // Check if we can access the spreadsheet
       const ssMeta = await sheets.spreadsheets.get({
         spreadsheetId: SPREADSHEET_ID,
@@ -101,7 +107,7 @@ export async function createExpressApp() {
 
       const sheetNames = ssMeta.data.sheets?.map(s => s.properties?.title) || [];
       const requiredSheets = ["Expenses", "Projects", "Categories", "Users"];
-      
+
       const missingSheets = requiredSheets.filter(name => !sheetNames.includes(name));
 
       if (missingSheets.length > 0) {
@@ -195,8 +201,8 @@ export async function createExpressApp() {
 
   // DB Status API
   app.get("/api/db-status", (req, res) => {
-    res.json({ 
-      connected: DB_CONNECTED && !!SPREADSHEET_ID, 
+    res.json({
+      connected: DB_CONNECTED && !!SPREADSHEET_ID,
       spreadsheetId: SPREADSHEET_ID,
       url: `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit`
     });
@@ -209,9 +215,9 @@ export async function createExpressApp() {
         spreadsheetId: SPREADSHEET_ID,
         ranges: ["Expenses!A2:M", "Projects!A2:E", "Categories!A2:A", "Users!A2:H"]
       });
-      
+
       const [expRows, projRows, catRows, userRows] = resp.data.valueRanges || [];
-      
+
       const expenses = (expRows.values || []).map(row => ({
         id: row[0], userId: row[1], userName: row[2], vendorName: row[3],
         amount: parseFloat(row[4] || "0"), date: row[5], category: row[6],
@@ -235,9 +241,9 @@ export async function createExpressApp() {
       res.json({ expenses, projects, categories, users });
     } catch (err: any) {
       console.error("DATA_FETCH_ERROR:", err);
-      res.status(500).json({ 
-        error: err.message, 
-        details: "Check if Google Sheets API is enabled and GOOGLE_SERVICE_ACCOUNT_JSON is correct." 
+      res.status(500).json({
+        error: err.message,
+        details: "Check if Google Sheets API is enabled and GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_PRIVATE_KEY are correct."
       });
     }
   });
@@ -251,25 +257,25 @@ export async function createExpressApp() {
       if (files && Array.isArray(files) && files.length > 0) {
         const d = new Date(expense.date);
         const monthYear = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-        
+
         const findOrCreateFolder = async (name: string, parentId: string) => {
           const q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false and '${parentId}' in parents`;
-          const find = await drive.files.list({ 
-            q, 
-            supportsAllDrives: true, 
-            includeItemsFromAllDrives: true, 
-            fields: "files(id)" 
+          const find = await drive.files.list({
+            q,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            fields: "files(id)"
           });
-          
+
           if (find.data.files?.length) return find.data.files[0].id;
-          
+
           const folder = await drive.files.create({
-            requestBody: { 
-              name, 
-              mimeType: "application/vnd.google-apps.folder", 
-              parents: [parentId] 
+            requestBody: {
+              name,
+              mimeType: "application/vnd.google-apps.folder",
+              parents: [parentId]
             },
-            fields: "id", 
+            fields: "id",
             supportsAllDrives: true
           });
           return folder.data.id;
@@ -277,21 +283,21 @@ export async function createExpressApp() {
 
         const monthId = await findOrCreateFolder(monthYear, ROOT_FOLDER_ID);
         const projId = await findOrCreateFolder(expense.projectName || "General", monthId!);
-        
+
         for (const fileItem of files) {
           const { base64, name, type } = fileItem;
           const buffer = Buffer.from(base64, 'base64');
-          
+
           const driveFile = await drive.files.create({
-            requestBody: { 
-              name: name || `Exp_${expense.vendorName}_${expense.date}.jpg`, 
-              parents: [projId!] 
+            requestBody: {
+              name: name || `Exp_${expense.vendorName}_${expense.date}.jpg`,
+              parents: [projId!]
             },
-            media: { 
-              mimeType: type || 'image/jpeg', 
+            media: {
+              mimeType: type || 'image/jpeg',
               body: Readable.from(buffer)
             },
-            fields: "id, webViewLink", 
+            fields: "id, webViewLink",
             supportsAllDrives: true
           });
           if (driveFile.data.webViewLink) {
@@ -301,8 +307,8 @@ export async function createExpressApp() {
       }
 
       const row = [
-        `EXP${Math.floor(Date.now()/1000)}`, expense.userId, expense.userName, 
-        expense.vendorName, expense.amount, expense.date, expense.category, 
+        `EXP${Math.floor(Date.now() / 1000)}`, expense.userId, expense.userName,
+        expense.vendorName, expense.amount, expense.date, expense.category,
         expense.projectId, "PENDING", "", finalLinks.join(","), new Date().toISOString(),
         expense.location || ""
       ];
@@ -403,13 +409,13 @@ export async function createExpressApp() {
     try {
       const rows = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: "Users!A:A" });
       const usersData = rows.data.values || [];
-      
+
       const updates = [];
 
       // For each user in userIds, set their project to 'id'
       // For users NOT in userIds but currently mapped to 'id', we might want to unmap them? 
       // User request says "map users", usually this means the new list is the ground truth.
-      
+
       // Let's get full users data to see current assignments
       const fullUsers = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: "Users!A:H" });
       const fullUsersData = fullUsers.data.values || [];
@@ -504,12 +510,12 @@ export async function createExpressApp() {
         if (userFound[5] !== "TRUE") {
           return res.status(403).json({ error: "Your account is pending approval by an administrator." });
         }
-        res.json({ 
-          success: true, 
-          user: { 
-            id: userFound[0], 
-            name: userFound[1], 
-            email: userFound[2], 
+        res.json({
+          success: true,
+          user: {
+            id: userFound[0],
+            name: userFound[1],
+            email: userFound[2],
             role: userFound[3],
             isApproved: userFound[5] === "TRUE",
             googleId: userFound[6] || ""
@@ -570,12 +576,12 @@ export async function createExpressApp() {
             requestBody: { values: [[googleId]] }
           });
         }
-        res.json({ 
-          success: true, 
-          user: { 
-            id: userFound[0], 
-            name: userFound[1], 
-            email: userFound[2], 
+        res.json({
+          success: true,
+          user: {
+            id: userFound[0],
+            name: userFound[1],
+            email: userFound[2],
             role: userFound[3],
             isApproved: true,
             googleId: googleId
@@ -583,7 +589,7 @@ export async function createExpressApp() {
         });
       } else {
         // Create new account if not exists (Pending approval)
-        const newId = `USR${Math.floor(Date.now()/1000)}`;
+        const newId = `USR${Math.floor(Date.now() / 1000)}`;
         await sheets.spreadsheets.values.append({
           spreadsheetId: SPREADSHEET_ID,
           range: "Users!A2:G",
@@ -592,16 +598,16 @@ export async function createExpressApp() {
         });
         res.status(403).json({ error: "Account created. Please wait for an administrator to approve your account." });
       }
-    } catch (err: any) { 
+    } catch (err: any) {
       console.error("GOOGLE_LOGIN_ERROR:", err);
-      res.status(500).json({ error: err.message }); 
+      res.status(500).json({ error: err.message });
     }
   });
 
   // Google Vision OCR Proxy
   app.post("/api/ocr", async (req, res) => {
     const { base64 } = req.body;
-    
+
     // Attempt using Service Account first (if auth is initialized)
     if (auth) {
       try {
@@ -624,7 +630,7 @@ export async function createExpressApp() {
 
     const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
     if (!GOOGLE_API_KEY) {
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: "Google Vision API failed and no GOOGLE_API_KEY is configured as fallback.",
         details: "Ensure Cloud Vision API is enabled for your service account or provide an API Key."
       });
